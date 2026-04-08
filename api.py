@@ -1,0 +1,151 @@
+"""
+FastAPI server — exposes OpenEnv standard endpoints + required hackathon endpoints.
+"""
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+import uvicorn
+
+from models import Action, Observation
+from environment import DevEnvEnvironment
+from tasks import TASKS, grade_episode
+
+app = FastAPI(
+    title="Dev Environment Debugger",
+    description="OpenEnv environment where an AI agent debugs a broken multi-service dev stack.",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# One environment instance per server (single-session for hackathon scope)
+env = DevEnvEnvironment()
+
+
+# ---------------------------------------------------------------------------
+# OpenEnv standard endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/reset")
+def reset(task_id: str = "task1") -> dict:
+    """Start a new episode. Returns initial observation."""
+    if task_id not in TASKS:
+        raise HTTPException(status_code=400, detail=f"Unknown task_id. Valid: {list(TASKS.keys())}")
+    obs = env.reset(task_id=task_id)
+    return obs.dict()
+
+
+@app.post("/step")
+def step(action: Action) -> dict:
+    """Submit an action. Returns observation, reward, done, info."""
+    obs, reward, done, info = env.step(action)
+    return {
+        "observation": obs.dict(),
+        "reward": reward,
+        "done": done,
+        "info": info,
+    }
+
+
+@app.get("/state")
+def state() -> dict:
+    """Returns current environment state."""
+    return env.state()
+
+
+# ---------------------------------------------------------------------------
+# Required hackathon endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/tasks")
+def list_tasks() -> dict:
+    """Returns task list and action schema."""
+    action_schema = {
+        "type": "string — one of: read_logs | inspect_env | edit_env | restart_service | run_healthcheck | submit",
+        "service": "string — target service: api | worker | database | proxy",
+        "key": "string — env var key (only for edit_env)",
+        "value": "string — env var value (only for edit_env)",
+    }
+    return {
+        "tasks": [
+            {
+                "id": t["id"],
+                "name": t["name"],
+                "difficulty": t["difficulty"],
+                "description": t["description"],
+                "faults_count": len(t["faults"]),
+            }
+            for t in TASKS.values()
+        ],
+        "action_schema": action_schema,
+    }
+
+
+@app.get("/grader")
+def grader(task_id: str = None) -> dict:
+    """Returns grader score for current or specified episode."""
+    current_state = env.state()
+    tid = task_id or current_state.get("task_id", "task1")
+    result = grade_episode(tid, current_state)
+    return {
+        "task_id": tid,
+        "grader_result": result,
+        "state_summary": {
+            "step": current_state["step"],
+            "fixed_faults": current_state["fixed_faults"],
+            "remaining_faults": current_state["remaining_faults"],
+            "services": {k: v["status"] for k, v in current_state["services"].items()},
+        },
+    }
+
+
+@app.post("/baseline")
+def baseline() -> dict:
+    """
+    Runs the baseline inference script against all 3 tasks.
+    Returns scores. Requires OPENAI_API_KEY in environment.
+    """
+    try:
+        import subprocess
+        import json
+        result = subprocess.run(
+            ["python", "baseline.py", "--output-json"],
+            capture_output=True, text=True, timeout=300
+        )
+        if result.returncode == 0:
+            scores = json.loads(result.stdout)
+            return {"status": "success", "scores": scores}
+        else:
+            return {"status": "error", "message": result.stderr}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+@app.get("/")
+def root():
+    return {
+        "name": "Dev Environment Debugger",
+        "version": "1.0.0",
+        "description": "OpenEnv environment for AI-powered dev environment debugging.",
+        "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline"],
+        "openenv": True,
+    }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    uvicorn.run("api:app", host="0.0.0.0", port=7860, reload=False)
