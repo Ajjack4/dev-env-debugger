@@ -1,0 +1,21 @@
+[project]
+name = "dev-env-debugger"
+version = "1.0.0"
+description = "OpenEnv environment where an AI agent debugs a broken multi-service dev stack"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.111.0",
+    "uvicorn==0.30.1",
+    "pydantic==2.7.1",
+    "requests==2.32.3",
+    "pyyaml==6.0.1",
+    "openai>=2.7.2",
+    "openenv-core>=0.2.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
