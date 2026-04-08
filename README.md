@@ -1,3 +1,13 @@
+---
+title: Dev Environment Debugger
+emoji: 🐛
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Dev Environment Debugger
 
 An [OpenEnv](https://huggingface.co/openenv) environment where an AI agent debugs a broken multi-service development stack. The agent must read logs, inspect configurations, fix environment variables, and restart services to restore a healthy system — exactly as a senior engineer would during onboarding or an incident.
