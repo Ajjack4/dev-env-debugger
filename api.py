@@ -2,9 +2,8 @@
 FastAPI server — exposes OpenEnv standard endpoints + required hackathon endpoints.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 import uvicorn
 
 from models import Action, Observation
@@ -136,8 +135,89 @@ def baseline() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Health check
+# OpenEnv runtime spec endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/health")
+def health():
+    """OpenEnv spec: must return status=healthy."""
+    return {"status": "healthy"}
+
+
+@app.get("/metadata")
+def metadata():
+    """OpenEnv spec: environment name and description."""
+    return {
+        "name": "Dev Environment Debugger",
+        "description": (
+            "OpenEnv environment where an AI agent debugs a broken multi-service "
+            "dev stack by reading logs, inspecting configs, and fixing env vars."
+        ),
+        "version": "1.0.0",
+        "author": "Ajjack4",
+    }
+
+
+@app.get("/schema")
+def schema():
+    """OpenEnv spec: action, observation, and state schemas."""
+    return {
+        "action": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["read_logs", "inspect_env", "edit_env",
+                             "restart_service", "run_healthcheck", "submit"],
+                },
+                "service": {"type": "string", "enum": ["api", "worker", "database", "proxy"]},
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            "required": ["type"],
+        },
+        "observation": {
+            "type": "object",
+            "properties": {
+                "step": {"type": "integer"},
+                "services": {"type": "object"},
+                "last_action_result": {"type": "object"},
+                "available_actions": {"type": "array", "items": {"type": "string"}},
+                "done": {"type": "boolean"},
+            },
+        },
+        "state": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "step": {"type": "integer"},
+                "done": {"type": "boolean"},
+                "fixed_faults": {"type": "array"},
+                "remaining_faults": {"type": "array"},
+                "services": {"type": "object"},
+            },
+        },
+    }
+
+
+@app.post("/mcp")
+async def mcp(request: Request):
+    """OpenEnv spec: minimal MCP / JSON-RPC 2.0 endpoint."""
+    try:
+        body = await request.json()
+        req_id = body.get("id", 1)
+    except Exception:
+        req_id = 1
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {
+            "name": "Dev Environment Debugger",
+            "version": "1.0.0",
+            "capabilities": {},
+        },
+    }
+
 
 @app.get("/")
 def root():
@@ -145,14 +225,10 @@ def root():
         "name": "Dev Environment Debugger",
         "version": "1.0.0",
         "description": "OpenEnv environment for AI-powered dev environment debugging.",
-        "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline"],
+        "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader",
+                      "/baseline", "/health", "/metadata", "/schema", "/mcp"],
         "openenv": True,
     }
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
 
 if __name__ == "__main__":
