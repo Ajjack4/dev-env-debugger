@@ -115,11 +115,19 @@ def baseline() -> dict:
         import subprocess
         import json
         result = subprocess.run(
-            ["python", "baseline.py", "--output-json"],
-            capture_output=True, text=True, timeout=300
+            ["python", "inference.py"],
+            capture_output=True, text=True, timeout=300,
+            env={**__import__("os").environ},
         )
-        if result.returncode == 0:
-            scores = json.loads(result.stdout)
+        # Parse [END] lines from structured stdout to extract per-task scores
+        scores = []
+        for line in result.stdout.splitlines():
+            if line.startswith("[END] "):
+                try:
+                    scores.append(json.loads(line[6:]))
+                except json.JSONDecodeError:
+                    pass
+        if result.returncode == 0 or scores:
             return {"status": "success", "scores": scores}
         else:
             return {"status": "error", "message": result.stderr}
