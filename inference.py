@@ -127,23 +127,39 @@ class EnvAdapter:
         self.base_url = base_url.rstrip("/")
 
     def reset(self, task_id: str) -> dict:
-        resp = requests.post(
-            f"{self.base_url}/reset", params={"task_id": task_id}, timeout=30
-        )
-        resp.raise_for_status()
-        return resp.json()
+        import time
+        for attempt in range(5):
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/reset", params={"task_id": task_id}, timeout=60
+                )
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as exc:
+                print(f"[DEBUG] reset() attempt {attempt+1} failed: {exc}", flush=True)
+                if attempt < 4:
+                    time.sleep(5)
+        return {"step": 0, "services": {}, "last_action_result": {"success": False, "message": "env unreachable"}, "available_actions": [], "done": True}
 
     def step(self, action: dict) -> dict:
-        resp = requests.post(f"{self.base_url}/step", json=action, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = requests.post(f"{self.base_url}/step", json=action, timeout=60)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            print(f"[DEBUG] step() failed: {exc}", flush=True)
+            return {"observation": {"step": 0, "services": {}, "last_action_result": {"success": False, "message": str(exc)}, "available_actions": [], "done": True}, "reward": 0.0, "done": True, "info": {}}
 
     def grader(self, task_id: str) -> dict:
-        resp = requests.get(
-            f"{self.base_url}/grader", params={"task_id": task_id}, timeout=30
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = requests.get(
+                f"{self.base_url}/grader", params={"task_id": task_id}, timeout=60
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            print(f"[DEBUG] grader() failed: {exc}", flush=True)
+            return {"grader_result": {"score": 0.0, "reason": str(exc)}}
 
 
 def obs_to_text(obs: dict) -> str:
@@ -235,4 +251,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        print(f"[DEBUG] Fatal error: {exc}", flush=True)
+        sys.exit(1)
