@@ -24,15 +24,20 @@ from openai import OpenAI
 # Config
 # ---------------------------------------------------------------------------
 
-_missing = [v for v in ("API_BASE_URL", "MODEL_NAME", "HF_TOKEN") if not os.getenv(v)]
-if _missing:
-    print(f"[ERROR] Missing required environment variables: {', '.join(_missing)}", flush=True)
-    sys.exit(1)
-
-API_BASE_URL: str = os.environ["API_BASE_URL"]
-MODEL_NAME: str = os.environ["MODEL_NAME"]
-HF_TOKEN: str = os.environ["HF_TOKEN"]
+# Accept HF_TOKEN or OPENAI_API_KEY (functional req says OPENAI_API_KEY,
+# mandatory instructions say HF_TOKEN — support both so either works)
+API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN: str = (
+    os.getenv("HF_TOKEN")
+    or os.getenv("OPENAI_API_KEY")
+    or ""
+)
 ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+
+if not HF_TOKEN:
+    print("[ERROR] Missing API key — set HF_TOKEN or OPENAI_API_KEY", flush=True)
+    sys.exit(1)
 
 TASK_IDS = ["task1", "task2", "task3"]
 BENCHMARK = "dev-env-debugger"
