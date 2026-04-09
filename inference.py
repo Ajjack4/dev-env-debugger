@@ -33,7 +33,7 @@ HF_TOKEN: str = (
     or os.getenv("OPENAI_API_KEY")
     or ""
 )
-ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "https://ajjack404-dev-env-debugger.hf.space")
 
 if not HF_TOKEN:
     print("[DEBUG] Warning: no API key found (HF_TOKEN / OPENAI_API_KEY). LLM calls will fail.", flush=True)
@@ -48,26 +48,18 @@ SUCCESS_SCORE_THRESHOLD = 0.5
 # ---------------------------------------------------------------------------
 
 def log_start(*, task: str, env: str, model: str) -> None:
-    print(
-        f"[START] {json.dumps({'task': task, 'env': env, 'model': model})}",
-        flush=True,
-    )
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
 def log_step(
     *, step: int, action: str, reward: float, done: bool, error: Optional[str]
 ) -> None:
-    print(
-        f"[STEP] {json.dumps({'step': step, 'action': action, 'reward': reward, 'done': done, 'error': error})}",
-        flush=True,
-    )
+    error_str = error if error else "none"
+    print(f"[STEP] step={step} reward={reward} done={done} error={error_str}", flush=True)
 
 
 def log_end(*, success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    print(
-        f"[END] {json.dumps({'success': success, 'steps': steps, 'score': score, 'rewards': rewards})}",
-        flush=True,
-    )
+    print(f"[END] success={success} steps={steps} score={score} rewards={rewards}", flush=True)
 
 
 # ---------------------------------------------------------------------------
