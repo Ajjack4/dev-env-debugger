@@ -24,6 +24,11 @@ from openai import OpenAI
 # Config
 # ---------------------------------------------------------------------------
 
+_missing = [v for v in ("API_BASE_URL", "MODEL_NAME", "HF_TOKEN") if not os.getenv(v)]
+if _missing:
+    print(f"[ERROR] Missing required environment variables: {', '.join(_missing)}", flush=True)
+    sys.exit(1)
+
 API_BASE_URL: str = os.environ["API_BASE_URL"]
 MODEL_NAME: str = os.environ["MODEL_NAME"]
 HF_TOKEN: str = os.environ["HF_TOKEN"]
