@@ -24,19 +24,20 @@ from openai import OpenAI
 # Config
 # ---------------------------------------------------------------------------
 
-# Accept HF_TOKEN or OPENAI_API_KEY (functional req says OPENAI_API_KEY,
-# mandatory instructions say HF_TOKEN — support both so either works)
+# Validator injects API_BASE_URL and API_KEY via LiteLLM proxy.
+# Also accept HF_TOKEN / OPENAI_API_KEY for local testing.
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN: str = (
-    os.getenv("HF_TOKEN")
+    os.getenv("API_KEY")        # validator-injected key (LiteLLM proxy)
+    or os.getenv("HF_TOKEN")
     or os.getenv("OPENAI_API_KEY")
     or ""
 )
 ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "https://ajjack404-dev-env-debugger.hf.space")
 
 if not HF_TOKEN:
-    print("[DEBUG] Warning: no API key found (HF_TOKEN / OPENAI_API_KEY). LLM calls will fail.", flush=True)
+    print("[DEBUG] Warning: no API key found. LLM calls will fail.", flush=True)
 
 TASK_IDS = ["task1", "task2", "task3"]
 BENCHMARK = "dev-env-debugger"
