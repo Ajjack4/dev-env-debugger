@@ -39,6 +39,16 @@ tasks:
     difficulty: hard
     description: Root cause fault causing cascading failures with misleading error messages.
 
+  - id: task4
+    name: Triple Fault Storm
+    difficulty: hard
+    description: Three simultaneous independent faults across all services. Agent must triage and fix all three.
+
+  - id: task5
+    name: Silent Misconfiguration
+    difficulty: expert
+    description: Two faults with no obvious error logs. Agent must inspect env vars proactively, not rely on logs.
+
 observation_space:
   type: object
   fields:
