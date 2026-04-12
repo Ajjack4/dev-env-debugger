@@ -40,7 +40,9 @@ API_KEY: str = (
 )
 
 LOCAL_IMAGE_NAME: str = os.getenv("LOCAL_IMAGE_NAME", "")
-ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "")
+# Validator runs our Docker container at localhost:7860 before running inference.py.
+# LOCAL_IMAGE_NAME is used when we need to start it ourselves.
+ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
 if not API_KEY:
     print("[DEBUG] Warning: no API key set (API_KEY / HF_TOKEN / OPENAI_API_KEY).", flush=True)
@@ -306,9 +308,9 @@ async def main() -> None:
     if LOCAL_IMAGE_NAME:
         env_url = start_env_container(LOCAL_IMAGE_NAME)
         if not env_url:
-            env_url = ENV_BASE_URL or "https://ajjack404-dev-env-debugger.hf.space"
+            env_url = ENV_BASE_URL  # already defaults to localhost:7860
     else:
-        env_url = ENV_BASE_URL or "https://ajjack404-dev-env-debugger.hf.space"
+        env_url = ENV_BASE_URL  # localhost:7860 or whatever validator set
 
     print(f"[DEBUG] Using env URL: {env_url}", flush=True)
     print(f"[DEBUG] Using API_BASE_URL: {API_BASE_URL}", flush=True)
