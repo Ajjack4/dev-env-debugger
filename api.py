@@ -4,6 +4,7 @@ FastAPI server — exposes OpenEnv standard endpoints + required hackathon endpo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 import uvicorn
 
 from models import Action, Observation
@@ -219,16 +220,270 @@ async def mcp(request: Request):
     }
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
+    return HTMLResponse(content=DASHBOARD_HTML)
+
+
+@app.get("/api")
+def api_info():
     return {
         "name": "Dev Environment Debugger",
         "version": "1.0.0",
         "description": "OpenEnv environment for AI-powered dev environment debugging.",
+        "tasks": list(TASKS.keys()),
         "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader",
                       "/baseline", "/health", "/metadata", "/schema", "/mcp"],
         "openenv": True,
     }
+
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dev Environment Debugger — OpenEnv</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+  header { background: linear-gradient(135deg, #161b22 0%, #1f2937 100%); border-bottom: 1px solid #30363d; padding: 24px 32px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 1.5rem; font-weight: 700; }
+  header .badge { background: #238636; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  header .subtitle { color: #8b949e; font-size: 0.9rem; margin-top: 4px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  @media(max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; }
+  .card h2 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .service { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; background: #0d1117; border: 1px solid #21262d; }
+  .service-name { font-weight: 600; font-size: 0.9rem; }
+  .status { padding: 3px 10px; border-radius: 10px; font-size: 0.78rem; font-weight: 700; }
+  .healthy { background: #1a4a2a; color: #3fb950; border: 1px solid #238636; }
+  .error { background: #4a1a1a; color: #f85149; border: 1px solid #da3633; }
+  .task-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 16px; cursor: pointer; transition: border-color 0.2s; }
+  .task-card:hover { border-color: #58a6ff; }
+  .task-card.active { border-color: #58a6ff; background: #1c2433; }
+  .task-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .task-name { font-weight: 700; }
+  .diff { padding: 3px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; }
+  .easy { background: #1a4a2a; color: #3fb950; }
+  .medium { background: #4a3a1a; color: #d29922; }
+  .hard { background: #4a1a1a; color: #f85149; }
+  .expert { background: #2d1a4a; color: #bc8cff; }
+  .task-desc { color: #8b949e; font-size: 0.85rem; line-height: 1.5; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  button { padding: 9px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: opacity 0.2s; }
+  button:hover { opacity: 0.85; }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+  .btn-danger { background: #da3633; color: #fff; }
+  .log { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 14px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8rem; line-height: 1.6; max-height: 260px; overflow-y: auto; color: #8b949e; white-space: pre-wrap; word-break: break-all; }
+  .log .ok { color: #3fb950; }
+  .log .err { color: #f85149; }
+  .log .info { color: #58a6ff; }
+  .score-bar { height: 8px; border-radius: 4px; background: #21262d; margin-top: 8px; overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #238636, #3fb950); transition: width 0.5s; }
+  .step-counter { font-size: 2rem; font-weight: 800; color: #58a6ff; }
+  .stat-label { color: #8b949e; font-size: 0.8rem; margin-top: 4px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+  .stat { text-align: center; }
+  #action-panel { margin-top: 24px; }
+  select, input[type=text] { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; width: 100%; margin-bottom: 8px; }
+  .full-width { grid-column: 1 / -1; }
+  .arch { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 16px 0; }
+  .svc-box { padding: 8px 16px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; border: 2px solid; text-align: center; min-width: 80px; }
+  .arrow { color: #58a6ff; font-size: 1.2rem; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <h1>🔧 Dev Environment Debugger</h1>
+      <span class="badge">OpenEnv</span>
+    </div>
+    <div class="subtitle">AI agent benchmark · 5 tasks · realistic multi-service debugging</div>
+  </div>
+</header>
+<main>
+  <div class="grid">
+    <!-- Services Panel -->
+    <div class="card">
+      <h2>⚙️ Service Status</h2>
+      <div id="arch" class="arch">
+        <div class="svc-box" id="box-proxy">proxy</div>
+        <div class="arrow">→</div>
+        <div class="svc-box" id="box-api">api</div>
+        <div class="arrow">→</div>
+        <div class="svc-box" id="box-database">database</div>
+      </div>
+      <div style="text-align:center;margin-bottom:16px">
+        <div class="arrow" style="font-size:1rem">↓</div>
+        <div class="svc-box" id="box-worker" style="display:inline-block;margin-top:4px">worker</div>
+      </div>
+      <div id="services-list"></div>
+      <div class="stats" style="margin-top:16px">
+        <div class="stat"><div class="step-counter" id="step-count">0</div><div class="stat-label">Steps</div></div>
+        <div class="stat"><div class="step-counter" id="fixed-count" style="color:#3fb950">0</div><div class="stat-label">Fixed</div></div>
+        <div class="stat"><div class="step-counter" id="score-val" style="color:#d29922">—</div><div class="stat-label">Score</div></div>
+      </div>
+    </div>
+
+    <!-- Action Panel -->
+    <div class="card">
+      <h2>🎮 Actions</h2>
+      <select id="action-type" onchange="updateActionFields()">
+        <option value="read_logs">read_logs</option>
+        <option value="inspect_env">inspect_env</option>
+        <option value="edit_env">edit_env</option>
+        <option value="restart_service">restart_service</option>
+        <option value="run_healthcheck">run_healthcheck</option>
+        <option value="submit">submit</option>
+      </select>
+      <div id="service-row">
+        <select id="action-service">
+          <option value="api">api</option>
+          <option value="worker">worker</option>
+          <option value="database">database</option>
+          <option value="proxy">proxy</option>
+        </select>
+      </div>
+      <div id="kv-row" style="display:none">
+        <input type="text" id="action-key" placeholder="env key (e.g. DB_PORT)" />
+        <input type="text" id="action-value" placeholder="new value (e.g. 5432)" />
+      </div>
+      <div class="actions">
+        <button class="btn-primary" onclick="doStep()">▶ Execute Action</button>
+        <button class="btn-secondary" onclick="doGrade()">📊 Grade</button>
+      </div>
+      <div class="log" id="action-log" style="margin-top:16px">No actions yet. Start an episode below.</div>
+    </div>
+
+    <!-- Tasks Panel -->
+    <div class="card full-width">
+      <h2>📋 Tasks</h2>
+      <div id="tasks-list"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+let currentTask = 'task1';
+
+async function fetchTasks() {
+  const r = await fetch('/tasks');
+  const d = await r.json();
+  const el = document.getElementById('tasks-list');
+  el.innerHTML = d.tasks.map(t => `
+    <div class="task-card ${t.id === currentTask ? 'active' : ''}" id="tc-${t.id}" onclick="selectTask('${t.id}')">
+      <div class="task-header">
+        <span class="task-name">${t.id} — ${t.name}</span>
+        <span class="diff ${t.difficulty}">${t.difficulty}</span>
+      </div>
+      <div class="task-desc">${t.description}</div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn-primary" onclick="event.stopPropagation(); resetTask('${t.id}')">▶ Start Episode</button>
+        <span style="color:#8b949e;font-size:0.8rem;align-self:center">${t.faults_count} fault${t.faults_count>1?'s':''}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function selectTask(id) {
+  currentTask = id;
+  document.querySelectorAll('.task-card').forEach(c => c.classList.remove('active'));
+  const el = document.getElementById('tc-' + id);
+  if (el) el.classList.add('active');
+}
+
+async function resetTask(taskId) {
+  selectTask(taskId);
+  const r = await fetch('/reset?task_id=' + taskId, {method:'POST'});
+  const obs = await r.json();
+  updateServices(obs.services);
+  log('info', 'Episode started: ' + taskId);
+  log('ok', obs.last_action_result.message);
+  document.getElementById('step-count').textContent = obs.step;
+  document.getElementById('fixed-count').textContent = '0';
+  document.getElementById('score-val').textContent = '—';
+}
+
+async function doStep() {
+  const type = document.getElementById('action-type').value;
+  const service = document.getElementById('action-service').value;
+  const key = document.getElementById('action-key').value;
+  const value = document.getElementById('action-value').value;
+  const action = {type};
+  if (type !== 'submit') action.service = service;
+  if (type === 'edit_env') { action.key = key; action.value = value; }
+
+  const r = await fetch('/step', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(action)});
+  const d = await r.json();
+  const obs = d.observation;
+  updateServices(obs.services);
+  document.getElementById('step-count').textContent = obs.step;
+  const cls = d.reward > 0 ? 'ok' : d.reward < 0 ? 'err' : 'info';
+  log(cls, `[${type}${service && type!=='submit'?' → '+service:''}] reward=${d.reward > 0 ? '+' : ''}${d.reward.toFixed(2)}`);
+  log('info', obs.last_action_result.message.replace(/\\n/g, ' '));
+  if (d.done) { log('ok', '✓ Episode done!'); doGrade(); }
+}
+
+async function doGrade() {
+  const r = await fetch('/grader?task_id=' + currentTask);
+  const d = await r.json();
+  const gr = d.grader_result;
+  document.getElementById('score-val').textContent = (gr.score * 100).toFixed(1) + '%';
+  document.getElementById('fixed-count').textContent = gr.faults_fixed || 0;
+  log('ok', `Score: ${(gr.score*100).toFixed(1)}% — ${gr.reason}`);
+}
+
+function updateServices(services) {
+  const colors = {healthy: '#3fb950', error: '#f85149'};
+  const bg = {healthy: '#1a4a2a', error: '#4a1a1a'};
+  const border = {healthy: '#238636', error: '#da3633'};
+  const list = document.getElementById('services-list');
+  list.innerHTML = Object.entries(services).map(([name, s]) => `
+    <div class="service">
+      <span class="service-name">${name}</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${s.port ? `<span style="color:#8b949e;font-size:0.8rem">:${s.port}</span>` : ''}
+        <span class="status ${s.status}">${s.status}</span>
+      </div>
+    </div>
+  `).join('');
+  ['proxy','api','database','worker'].forEach(name => {
+    const box = document.getElementById('box-' + name);
+    if (box && services[name]) {
+      const st = services[name].status;
+      box.style.borderColor = border[st] || '#30363d';
+      box.style.color = colors[st] || '#e6edf3';
+      box.style.background = bg[st] || '#21262d';
+    }
+  });
+}
+
+function log(cls, msg) {
+  const el = document.getElementById('action-log');
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = '› ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+  if (el.children.length > 100) el.removeChild(el.firstChild);
+}
+
+function updateActionFields() {
+  const type = document.getElementById('action-type').value;
+  document.getElementById('service-row').style.display = type === 'submit' ? 'none' : 'block';
+  document.getElementById('kv-row').style.display = type === 'edit_env' ? 'block' : 'none';
+}
+
+fetchTasks();
+resetTask('task1');
+</script>
+</body>
+</html>"""
 
 
 if __name__ == "__main__":
