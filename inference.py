@@ -273,8 +273,8 @@ async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
 
         grader_data = env.grader(task_id)
         grader_result = grader_data.get("grader_result", {})
-        score = float(grader_result.get("score", 0.0))
-        score = min(max(score, 0.0), 1.0)
+        score = float(grader_result.get("score", 0.001))
+        score = max(0.001, min(0.999, score))  # strictly (0, 1) exclusive
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     finally:

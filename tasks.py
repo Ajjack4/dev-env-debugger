@@ -41,14 +41,19 @@ TASKS = {
 }
 
 
+def _clamp(score: float) -> float:
+    """Clamp score to strictly (0, 1) exclusive as required by OpenEnv spec."""
+    return max(0.001, min(0.999, round(score, 3)))
+
+
 def grade_episode(task_id: str, env_state: dict) -> dict:
     """
-    Programmatic grader. Returns score 0.0-1.0 and breakdown.
+    Programmatic grader. Returns score strictly in (0, 1) exclusive.
     Called after episode ends (done=True).
     """
     task = TASKS.get(task_id)
     if not task:
-        return {"score": 0.0, "reason": f"Unknown task: {task_id}"}
+        return {"score": _clamp(0.0), "reason": f"Unknown task: {task_id}"}
 
     services = env_state.get("services", {})
     fixed_faults = set(env_state.get("fixed_faults", []))
@@ -69,21 +74,21 @@ def grade_episode(task_id: str, env_state: dict) -> dict:
             efficiency = max(0.0, 1.0 - (steps - 3) * 0.03)
             score = min(1.0, 0.85 + efficiency * 0.15)
             return {
-                "score": round(score, 3),
+                "score": _clamp(score),
                 "reason": f"All services healthy. Fixed in {steps} steps.",
                 "faults_fixed": faults_fixed,
                 "total_faults": total_faults,
             }
         elif faults_fixed > 0:
             return {
-                "score": 0.4,
+                "score": _clamp(0.4),
                 "reason": "Fault fixed but service not restarted or submit not called.",
                 "faults_fixed": faults_fixed,
                 "total_faults": total_faults,
             }
         else:
             return {
-                "score": 0.0,
+                "score": _clamp(0.0),
                 "reason": "No faults fixed.",
                 "faults_fixed": 0,
                 "total_faults": total_faults,
@@ -97,21 +102,21 @@ def grade_episode(task_id: str, env_state: dict) -> dict:
             efficiency = max(0.0, 1.0 - (steps - 5) * 0.02)
             score = min(1.0, 0.85 + efficiency * 0.15)
             return {
-                "score": round(score, 3),
+                "score": _clamp(score),
                 "reason": f"All services healthy. Both faults fixed in {steps} steps.",
                 "faults_fixed": faults_fixed,
                 "total_faults": total_faults,
             }
         elif faults_fixed == 1:
             return {
-                "score": 0.45,
+                "score": _clamp(0.45),
                 "reason": f"One of two faults fixed. Partial credit.",
                 "faults_fixed": faults_fixed,
                 "total_faults": total_faults,
             }
         else:
             return {
-                "score": 0.0,
+                "score": _clamp(0.0),
                 "reason": "No faults fixed.",
                 "faults_fixed": 0,
                 "total_faults": total_faults,
@@ -126,7 +131,7 @@ def grade_episode(task_id: str, env_state: dict) -> dict:
             efficiency = max(0.0, 1.0 - (steps - 4) * 0.04)
             score = min(1.0, 0.80 + efficiency * 0.20)
             return {
-                "score": round(score, 3),
+                "score": _clamp(score),
                 "reason": f"Root cause found and fixed. All services recovered in {steps} steps.",
                 "faults_fixed": faults_fixed,
                 "total_faults": total_faults,
@@ -134,17 +139,17 @@ def grade_episode(task_id: str, env_state: dict) -> dict:
         elif faults_fixed > 0:
             # Fixed something but not all healthy — partial
             return {
-                "score": 0.3,
+                "score": _clamp(0.3),
                 "reason": "Partial fix. Root cause addressed but services not fully recovered.",
                 "faults_fixed": faults_fixed,
                 "total_faults": total_faults,
             }
         else:
             return {
-                "score": 0.0,
+                "score": _clamp(0.0),
                 "reason": "Root cause not identified. All services still broken.",
                 "faults_fixed": 0,
                 "total_faults": total_faults,
             }
 
-    return {"score": 0.0, "reason": "Unhandled task."}
+    return {"score": _clamp(0.0), "reason": "Unhandled task."}
