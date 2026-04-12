@@ -1,48 +1,108 @@
 """
 Inference script — Dev Environment Debugger (OpenEnv Hackathon)
 
-Required environment variables:
-    API_BASE_URL   OpenAI-compatible LLM API endpoint
-    MODEL_NAME     Model identifier for inference
-    HF_TOKEN       HuggingFace / API key
+Environment variables (injected by validator):
+    API_BASE_URL     LiteLLM proxy endpoint for LLM calls
+    API_KEY          API key for the LiteLLM proxy
+    MODEL_NAME       Model identifier (default: gpt-4o-mini)
+    LOCAL_IMAGE_NAME Docker image name to start the environment container
 
-Optional:
-    ENV_BASE_URL   Base URL of the deployed OpenEnv Space
-                   (default: http://localhost:7860)
+Optional (for local testing):
+    ENV_BASE_URL     Override environment URL instead of starting Docker
+    HF_TOKEN         Alias for API_KEY (local testing)
+    OPENAI_API_KEY   Alias for API_KEY (local testing)
 """
 
 import asyncio
 import json
 import os
+import subprocess
 import sys
+import time
 from typing import List, Optional
 
 import requests
 from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — follow validator spec exactly
 # ---------------------------------------------------------------------------
 
-# Validator injects API_BASE_URL and API_KEY via LiteLLM proxy.
-# Also accept HF_TOKEN / OPENAI_API_KEY for local testing.
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN: str = (
-    os.getenv("API_KEY")        # validator-injected key (LiteLLM proxy)
+
+# Validator injects API_KEY. Accept aliases for local testing.
+API_KEY: str = (
+    os.getenv("API_KEY")
     or os.getenv("HF_TOKEN")
     or os.getenv("OPENAI_API_KEY")
     or ""
 )
-ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "https://ajjack404-dev-env-debugger.hf.space")
 
-if not HF_TOKEN:
-    print("[DEBUG] Warning: no API key found. LLM calls will fail.", flush=True)
+LOCAL_IMAGE_NAME: str = os.getenv("LOCAL_IMAGE_NAME", "")
+ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "")
+
+if not API_KEY:
+    print("[DEBUG] Warning: no API key set (API_KEY / HF_TOKEN / OPENAI_API_KEY).", flush=True)
 
 TASK_IDS = ["task1", "task2", "task3"]
 BENCHMARK = "dev-env-debugger"
 MAX_STEPS = 20
 SUCCESS_SCORE_THRESHOLD = 0.5
+
+# ---------------------------------------------------------------------------
+# Docker container lifecycle
+# ---------------------------------------------------------------------------
+
+_container_id: str = ""
+
+
+def start_env_container(image_name: str) -> str:
+    """Start the environment Docker container. Returns its base URL."""
+    global _container_id
+    print(f"[DEBUG] Starting container from image: {image_name}", flush=True)
+    try:
+        result = subprocess.run(
+            ["docker", "run", "-d", "--rm", "-p", "7860:7860", image_name],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            _container_id = result.stdout.strip()
+            print(f"[DEBUG] Container started: {_container_id[:12]}", flush=True)
+            # Wait for the server inside the container to be ready
+            for _ in range(12):
+                time.sleep(5)
+                try:
+                    r = requests.get("http://localhost:7860/health", timeout=5)
+                    if r.status_code == 200:
+                        print("[DEBUG] Container health check passed.", flush=True)
+                        return "http://localhost:7860"
+                except Exception:
+                    pass
+            print("[DEBUG] Container started but health check timed out.", flush=True)
+            return "http://localhost:7860"
+        else:
+            print(f"[DEBUG] docker run failed: {result.stderr.strip()}", flush=True)
+    except FileNotFoundError:
+        print("[DEBUG] docker not found in PATH.", flush=True)
+    except Exception as exc:
+        print(f"[DEBUG] start_env_container error: {exc}", flush=True)
+    return ""
+
+
+def stop_env_container() -> None:
+    global _container_id
+    if _container_id:
+        try:
+            subprocess.run(
+                ["docker", "stop", _container_id],
+                capture_output=True, timeout=15,
+            )
+            print(f"[DEBUG] Container stopped: {_container_id[:12]}", flush=True)
+        except Exception as exc:
+            print(f"[DEBUG] stop_env_container error: {exc}", flush=True)
+        _container_id = ""
+
 
 # ---------------------------------------------------------------------------
 # Structured logging — [START] / [STEP] / [END]
@@ -95,7 +155,7 @@ def get_model_message(
         return '{"type": "submit"}'
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(history[-10:])  # keep last 10 turns to stay within context
+    messages.extend(history[-10:])
     messages.append({"role": "user", "content": obs_text})
 
     try:
@@ -108,7 +168,7 @@ def get_model_message(
         return response.choices[0].message.content.strip()
     except Exception as exc:
         print(f"[DEBUG] Model request failed: {exc}", flush=True)
-        return '{"type": "submit"}'  # safe fallback — ends episode cleanly
+        return '{"type": "submit"}'
 
 
 # ---------------------------------------------------------------------------
@@ -116,39 +176,45 @@ def get_model_message(
 # ---------------------------------------------------------------------------
 
 class EnvAdapter:
-    """Thin wrapper around the OpenEnv HTTP API."""
-
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
 
     def reset(self, task_id: str) -> dict:
-        import time
         for attempt in range(5):
             try:
                 resp = requests.post(
-                    f"{self.base_url}/reset", params={"task_id": task_id}, timeout=60
+                    f"{self.base_url}/reset", params={"task_id": task_id}, timeout=30
                 )
                 resp.raise_for_status()
                 return resp.json()
             except Exception as exc:
-                print(f"[DEBUG] reset() attempt {attempt+1} failed: {exc}", flush=True)
+                print(f"[DEBUG] reset() attempt {attempt + 1} failed: {exc}", flush=True)
                 if attempt < 4:
-                    time.sleep(5)
-        return {"step": 0, "services": {}, "last_action_result": {"success": False, "message": "env unreachable"}, "available_actions": [], "done": True}
+                    time.sleep(3)
+        return {
+            "step": 0, "services": {}, "done": True,
+            "last_action_result": {"success": False, "message": "env unreachable"},
+            "available_actions": [],
+        }
 
     def step(self, action: dict) -> dict:
         try:
-            resp = requests.post(f"{self.base_url}/step", json=action, timeout=60)
+            resp = requests.post(f"{self.base_url}/step", json=action, timeout=30)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
             print(f"[DEBUG] step() failed: {exc}", flush=True)
-            return {"observation": {"step": 0, "services": {}, "last_action_result": {"success": False, "message": str(exc)}, "available_actions": [], "done": True}, "reward": 0.0, "done": True, "info": {}}
+            return {
+                "observation": {"step": 0, "services": {}, "done": True,
+                                "last_action_result": {"success": False, "message": str(exc)},
+                                "available_actions": []},
+                "reward": 0.0, "done": True, "info": {},
+            }
 
     def grader(self, task_id: str) -> dict:
         try:
             resp = requests.get(
-                f"{self.base_url}/grader", params={"task_id": task_id}, timeout=60
+                f"{self.base_url}/grader", params={"task_id": task_id}, timeout=30
             )
             resp.raise_for_status()
             return resp.json()
@@ -165,7 +231,7 @@ def obs_to_text(obs: dict) -> str:
     )
     last = obs.get("last_action_result", {})
     return (
-        f"Step {obs['step']}\n"
+        f"Step {obs.get('step', 0)}\n"
         f"Services:\n{svc_lines}\n"
         f"Last action: {'OK' if last.get('success') else 'FAIL'} — {last.get('message', '')}\n"
         f"Done: {obs.get('done', False)}"
@@ -176,7 +242,7 @@ def obs_to_text(obs: dict) -> str:
 # Episode runner
 # ---------------------------------------------------------------------------
 
-async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
+async def run_task(client: Optional[OpenAI], env: EnvAdapter, task_id: str) -> None:
     history: List[dict] = []
     rewards: List[float] = []
     steps_taken = 0
@@ -199,7 +265,7 @@ async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
             try:
                 action = json.loads(raw_action)
             except json.JSONDecodeError:
-                error = f"Invalid JSON from model: {raw_action}"
+                error = f"Invalid JSON: {raw_action}"
                 action = {"type": "submit"}
 
             step_data = env.step(action)
@@ -226,8 +292,6 @@ async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
 
     except Exception as exc:
         print(f"[DEBUG] Task {task_id} error: {exc}", flush=True)
-        score = 0.0
-        success = False
 
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
@@ -238,24 +302,36 @@ async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    # Use placeholder key if none provided — real failure happens at API call
-    # level and is caught inside get_model_message(), not here.
-    api_key = HF_TOKEN if HF_TOKEN else "none"
+    # Resolve environment URL: Docker container > explicit ENV_BASE_URL > HF Space
+    if LOCAL_IMAGE_NAME:
+        env_url = start_env_container(LOCAL_IMAGE_NAME)
+        if not env_url:
+            env_url = ENV_BASE_URL or "https://ajjack404-dev-env-debugger.hf.space"
+    else:
+        env_url = ENV_BASE_URL or "https://ajjack404-dev-env-debugger.hf.space"
+
+    print(f"[DEBUG] Using env URL: {env_url}", flush=True)
+    print(f"[DEBUG] Using API_BASE_URL: {API_BASE_URL}", flush=True)
+    print(f"[DEBUG] Using MODEL_NAME: {MODEL_NAME}", flush=True)
+
+    # Initialize OpenAI client pointed at validator's LiteLLM proxy
+    client: Optional[OpenAI] = None
     try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY or "none")
     except Exception as exc:
         print(f"[DEBUG] OpenAI client init failed: {exc}", flush=True)
-        client = None
 
-    env = EnvAdapter(ENV_BASE_URL)
+    env = EnvAdapter(env_url)
 
-    for task_id in TASK_IDS:
-        # Wrap individually — one task failing must not prevent others logging.
-        try:
-            await run_task(client, env, task_id)
-        except Exception as exc:
-            print(f"[DEBUG] run_task({task_id}) uncaught: {exc}", flush=True)
-            print(f"[END] success=False steps=0 score=0.0 rewards=[]", flush=True)
+    try:
+        for task_id in TASK_IDS:
+            try:
+                await run_task(client, env, task_id)
+            except Exception as exc:
+                print(f"[DEBUG] run_task({task_id}) uncaught: {exc}", flush=True)
+                print(f"[END] success=False steps=0 score=0.0 rewards=[]", flush=True)
+    finally:
+        stop_env_container()
 
 
 if __name__ == "__main__":
