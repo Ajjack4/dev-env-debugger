@@ -1,23 +1,17 @@
 """
-Inference script — Dev Environment Debugger (OpenEnv Hackathon)
+Inference Script — Dev Environment Debugger (OpenEnv Hackathon)
 
-Environment variables (injected by validator):
-    API_BASE_URL     LiteLLM proxy endpoint for LLM calls
-    API_KEY          API key for the LiteLLM proxy
-    MODEL_NAME       Model identifier (default: gpt-4o-mini)
-    LOCAL_IMAGE_NAME Docker image name to start the environment container
-
-Optional (for local testing):
-    ENV_BASE_URL     Override environment URL instead of starting Docker
-    HF_TOKEN         Alias for API_KEY (local testing)
-    OPENAI_API_KEY   Alias for API_KEY (local testing)
+Required environment variables (injected by validator):
+    API_BASE_URL     The API endpoint for the LLM.
+    MODEL_NAME       The model identifier to use for inference.
+    HF_TOKEN         Your Hugging Face / API key.
+    IMAGE_NAME       Docker image name for the environment (if using from_docker_image).
 """
 
 import asyncio
 import json
 import os
 import subprocess
-import sys
 import time
 from typing import List, Optional
 
@@ -25,32 +19,47 @@ import requests
 from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# Config — follow validator spec exactly
+# Config — match sample inference.py exactly
 # ---------------------------------------------------------------------------
 
-API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
+IMAGE_NAME: str = os.getenv("IMAGE_NAME", "")
 
-# Validator injects API_KEY. Accept aliases for local testing.
-API_KEY: str = (
-    os.getenv("API_KEY")
-    or os.getenv("HF_TOKEN")
-    or os.getenv("OPENAI_API_KEY")
-    or ""
-)
+# HF_TOKEN checked first (validator injects HF_TOKEN), API_KEY as fallback
+API_KEY: Optional[str] = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
-LOCAL_IMAGE_NAME: str = os.getenv("LOCAL_IMAGE_NAME", "")
-# Validator runs our Docker container at localhost:7860 before running inference.py.
-# LOCAL_IMAGE_NAME is used when we need to start it ourselves.
-ENV_BASE_URL: str = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+API_BASE_URL: str = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME: str = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 
-if not API_KEY:
-    print("[DEBUG] Warning: no API key set (API_KEY / HF_TOKEN / OPENAI_API_KEY).", flush=True)
+BENCHMARK: str = "dev-env-debugger"
+TASK_IDS: List[str] = ["task1", "task2", "task3"]
+MAX_STEPS: int = 20
+SUCCESS_SCORE_THRESHOLD: float = 0.5
 
-TASK_IDS = ["task1", "task2", "task3"]
-BENCHMARK = "dev-env-debugger"
-MAX_STEPS = 20
-SUCCESS_SCORE_THRESHOLD = 0.5
+# ---------------------------------------------------------------------------
+# Structured logging — exact format from sample
+# ---------------------------------------------------------------------------
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    success_val = str(success).lower()
+    print(
+        f"[END] success={success_val} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Docker container lifecycle
@@ -60,7 +69,7 @@ _container_id: str = ""
 
 
 def start_env_container(image_name: str) -> str:
-    """Start the environment Docker container. Returns its base URL."""
+    """Start the environment Docker container. Returns its base URL or empty string."""
     global _container_id
     print(f"[DEBUG] Starting container from image: {image_name}", flush=True)
     try:
@@ -71,7 +80,6 @@ def start_env_container(image_name: str) -> str:
         if result.returncode == 0:
             _container_id = result.stdout.strip()
             print(f"[DEBUG] Container started: {_container_id[:12]}", flush=True)
-            # Wait for the server inside the container to be ready
             for _ in range(12):
                 time.sleep(5)
                 try:
@@ -81,7 +89,7 @@ def start_env_container(image_name: str) -> str:
                         return "http://localhost:7860"
                 except Exception:
                     pass
-            print("[DEBUG] Container started but health check timed out.", flush=True)
+            print("[DEBUG] Container health check timed out, continuing anyway.", flush=True)
             return "http://localhost:7860"
         else:
             print(f"[DEBUG] docker run failed: {result.stderr.strip()}", flush=True)
@@ -96,33 +104,11 @@ def stop_env_container() -> None:
     global _container_id
     if _container_id:
         try:
-            subprocess.run(
-                ["docker", "stop", _container_id],
-                capture_output=True, timeout=15,
-            )
+            subprocess.run(["docker", "stop", _container_id], capture_output=True, timeout=15)
             print(f"[DEBUG] Container stopped: {_container_id[:12]}", flush=True)
         except Exception as exc:
             print(f"[DEBUG] stop_env_container error: {exc}", flush=True)
         _container_id = ""
-
-
-# ---------------------------------------------------------------------------
-# Structured logging — [START] / [STEP] / [END]
-# ---------------------------------------------------------------------------
-
-def log_start(*, task: str, env: str, model: str) -> None:
-    print(f"[START] task={task} env={env} model={model}", flush=True)
-
-
-def log_step(
-    *, step: int, action: str, reward: float, done: bool, error: Optional[str]
-) -> None:
-    error_str = error if error else "none"
-    print(f"[STEP] step={step} reward={reward} done={done} error={error_str}", flush=True)
-
-
-def log_end(*, success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    print(f"[END] success={success} steps={steps} score={score} rewards={rewards}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -150,16 +136,10 @@ STRATEGY:
 """
 
 
-def get_model_message(
-    client: Optional[OpenAI], obs_text: str, history: List[dict]
-) -> str:
-    if client is None:
-        return '{"type": "submit"}'
-
+def get_model_message(client: OpenAI, obs_text: str, history: List[dict]) -> str:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": obs_text})
-
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -167,7 +147,7 @@ def get_model_message(
             temperature=0.2,
             max_tokens=200,
         )
-        return response.choices[0].message.content.strip()
+        return (response.choices[0].message.content or "").strip()
     except Exception as exc:
         print(f"[DEBUG] Model request failed: {exc}", flush=True)
         return '{"type": "submit"}'
@@ -207,9 +187,11 @@ class EnvAdapter:
         except Exception as exc:
             print(f"[DEBUG] step() failed: {exc}", flush=True)
             return {
-                "observation": {"step": 0, "services": {}, "done": True,
-                                "last_action_result": {"success": False, "message": str(exc)},
-                                "available_actions": []},
+                "observation": {
+                    "step": 0, "services": {}, "done": True,
+                    "last_action_result": {"success": False, "message": str(exc)},
+                    "available_actions": [],
+                },
                 "reward": 0.0, "done": True, "info": {},
             }
 
@@ -223,6 +205,9 @@ class EnvAdapter:
         except Exception as exc:
             print(f"[DEBUG] grader() failed: {exc}", flush=True)
             return {"grader_result": {"score": 0.0, "reason": str(exc)}}
+
+    def close(self) -> None:
+        pass  # HTTP adapter — no persistent connection to close
 
 
 def obs_to_text(obs: dict) -> str:
@@ -241,10 +226,10 @@ def obs_to_text(obs: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Episode runner
+# Episode runner — mirrors sample inference.py structure
 # ---------------------------------------------------------------------------
 
-async def run_task(client: Optional[OpenAI], env: EnvAdapter, task_id: str) -> None:
+async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
     history: List[dict] = []
     rewards: List[float] = []
     steps_taken = 0
@@ -267,7 +252,7 @@ async def run_task(client: Optional[OpenAI], env: EnvAdapter, task_id: str) -> N
             try:
                 action = json.loads(raw_action)
             except json.JSONDecodeError:
-                error = f"Invalid JSON: {raw_action}"
+                error = f"invalid_json"
                 action = {"type": "submit"}
 
             step_data = env.step(action)
@@ -292,52 +277,38 @@ async def run_task(client: Optional[OpenAI], env: EnvAdapter, task_id: str) -> N
         score = min(max(score, 0.0), 1.0)
         success = score >= SUCCESS_SCORE_THRESHOLD
 
-    except Exception as exc:
-        print(f"[DEBUG] Task {task_id} error: {exc}", flush=True)
-
     finally:
+        try:
+            env.close()
+        except Exception as exc:
+            print(f"[DEBUG] env.close() error: {exc}", flush=True)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Entry point — mirrors sample inference.py structure
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    # Resolve environment URL: Docker container > explicit ENV_BASE_URL > HF Space
-    if LOCAL_IMAGE_NAME:
-        env_url = start_env_container(LOCAL_IMAGE_NAME)
+    # Resolve environment URL
+    if IMAGE_NAME:
+        env_url = start_env_container(IMAGE_NAME)
         if not env_url:
-            env_url = ENV_BASE_URL  # already defaults to localhost:7860
+            env_url = os.getenv("ENV_BASE_URL", "http://localhost:7860")
     else:
-        env_url = ENV_BASE_URL  # localhost:7860 or whatever validator set
+        env_url = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
-    print(f"[DEBUG] Using env URL: {env_url}", flush=True)
-    print(f"[DEBUG] Using API_BASE_URL: {API_BASE_URL}", flush=True)
-    print(f"[DEBUG] Using MODEL_NAME: {MODEL_NAME}", flush=True)
+    print(f"[DEBUG] env_url={env_url} api_base={API_BASE_URL} model={MODEL_NAME}", flush=True)
 
-    # Initialize OpenAI client pointed at validator's LiteLLM proxy
-    client: Optional[OpenAI] = None
-    try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY or "none")
-    except Exception as exc:
-        print(f"[DEBUG] OpenAI client init failed: {exc}", flush=True)
-
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     env = EnvAdapter(env_url)
 
     try:
         for task_id in TASK_IDS:
-            try:
-                await run_task(client, env, task_id)
-            except Exception as exc:
-                print(f"[DEBUG] run_task({task_id}) uncaught: {exc}", flush=True)
-                print(f"[END] success=False steps=0 score=0.0 rewards=[]", flush=True)
+            await run_task(client, env, task_id)
     finally:
         stop_env_container()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as exc:
-        print(f"[DEBUG] Fatal error: {exc}", flush=True)
+    asyncio.run(main())
