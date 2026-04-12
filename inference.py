@@ -88,8 +88,11 @@ STRATEGY:
 
 
 def get_model_message(
-    client: OpenAI, obs_text: str, history: List[dict]
+    client: Optional[OpenAI], obs_text: str, history: List[dict]
 ) -> str:
+    if client is None:
+        return '{"type": "submit"}'
+
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(history[-10:])  # keep last 10 turns to stay within context
     messages.append({"role": "user", "content": obs_text})
@@ -234,11 +237,24 @@ async def run_task(client: OpenAI, env: EnvAdapter, task_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    # Use placeholder key if none provided — real failure happens at API call
+    # level and is caught inside get_model_message(), not here.
+    api_key = HF_TOKEN if HF_TOKEN else "none"
+    try:
+        client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
+    except Exception as exc:
+        print(f"[DEBUG] OpenAI client init failed: {exc}", flush=True)
+        client = None
+
     env = EnvAdapter(ENV_BASE_URL)
 
     for task_id in TASK_IDS:
-        await run_task(client, env, task_id)
+        # Wrap individually — one task failing must not prevent others logging.
+        try:
+            await run_task(client, env, task_id)
+        except Exception as exc:
+            print(f"[DEBUG] run_task({task_id}) uncaught: {exc}", flush=True)
+            print(f"[END] success=False steps=0 score=0.0 rewards=[]", flush=True)
 
 
 if __name__ == "__main__":
